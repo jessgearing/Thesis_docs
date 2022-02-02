@@ -66,7 +66,7 @@ summary(SesamDatabase$SEC)
 table(SesamDatabase$SEC)
 
 save(SesamDatabase,
-     file="~/sesam/MSc_project/GW50/thesis/data_org/SesamDatabase_GWXX_DATUMXXXX.RData",
+     file="~/sesam/MSc_project/Thesis_docs/data/SesamDatabase_GWXX_DATUMXXXX.RData",
      vebose=T)
 ```
 
@@ -146,13 +146,14 @@ SESAM_cow$Ruminating<-ifelse(is.na(SESAM_cow$Ruminating),0,SESAM_cow$Ruminating)
 SESAM_cow$activ <- SESAM_cow$Eating+SESAM_cow$Laying+SESAM_cow$Standing+SESAM_cow$Walking+SESAM_cow$Ruminating
 
 save(SESAM_cow,
-     file="~/sesam/MSc_project/Thesis_docs/SESAM_cow_new_hour_GWXX_DATUMXXXX.RData",
+     file="~/sesam/MSc_project/Thesis_docs/data/SESAM_cow_new_hour_GWXX_DATUMXXXX.RData",
      vebose=T)
 ```
 
 Because we only have health and reproductive event data on a daily basis, rather than an exact time point or hour within that day, we merge the data of minutes spent on each activity per hour into minutes spent on each activity per day.
 ```{r}
-load("~/sesam/MSc_project/Thesis_docs/SESAM_cow_new_hour_GWXX_DATUMXXXX.RData")
+library(dplyr)
+load("~/sesam/MSc_project/Thesis_docs/data/SESAM_cow_new_hour_GWXX_DATUMXXXX.RData")
 SESAM_daily_min <- SESAM_cow %>%
   group_by(SENSOR_MAC, DAY) %>%
   summarise(Lying = sum(Laying),
@@ -188,13 +189,12 @@ p <- ggplot(no_outliers, aes(Daily_Activ)) + geom_boxplot()
 p
 ```
 
-We still have too many outliers: with 1440 minutes in a day, we remove all data with less than 1100 min and more than 1440 mins per day
+We still have too many outliers: with 1440 minutes in a day, we remove all data with less than 1200 min and more than 1440 mins per day ( this means we have a minimum of 20 hours of data per day)
 ```{r}
 full_data_SESAM2 <- SESAM_daily_min %>%
-  filter(Daily_Activ > 1100 & Daily_Activ < 1400)
+  filter(Daily_Activ > 1200 & Daily_Activ < 1440)
 
 plot_mean_mins <- ggplot(full_data_SESAM2, aes(Daily_Activ)) + geom_boxplot()
-ggsave(plot_mean_mins, file = "daily_activ_boxplot_filtered2.pdf")
 plot_mean_mins
 ```
 
@@ -203,7 +203,7 @@ Then we want to only include data that has a recording for every activity at lea
 all_activity <- full_data_SESAM2 %>%
   filter(Lying > 0 & Eating >0 & Standing > 0 & Walking > 0 & Ruminating > 0)
 save(all_activity,
-     file="~/sesam/MSc_project/GW50/thesis/data_org/all_activity_SESAM_COW.RData",
+     file="~/sesam/MSc_project/Thesis_docs/data/all_activity_SESAM_COW.RData",
      vebose=T)
 ```
 
@@ -222,7 +222,6 @@ df <- melt(subset(all_activity,
 
 #now we can plot
 plot_mean <- ggplot(df, aes(series, value, fill = series)) + geom_violin()
-ggsave(plot_mean, file = "series_violin.pdf")
 plot_mean
 ```
 
@@ -248,7 +247,7 @@ df2 <- melt(subset(all_activity2,
            variable.name = 'series')
 
 save(df2,
-     file="~/sesam/MSc_project/GW50/thesis/data_org/melted_SESAM_COW.RData",
+     file="~/sesam/MSc_project/Thesis_docs/data/melted_SESAM_COW.RData",
      vebose=T)
 
 plot_mean2 <- ggplot(df2, aes(series, value, fill = series)) + geom_violin()
