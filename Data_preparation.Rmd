@@ -1,0 +1,257 @@
+---
+title: "Data_preparation"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load required libraries 
+```{r}
+library(dplyr)
+library(reshape)
+```
+
+We load the already classified behavioural data. There are single files per sensor. Here we combine the individual cow sensor data into one large dataset.  
+```{r}
+s_data_input_dir <- "/qualstorzws01/data_projekte/projekte/sesam/data/UL/GW50/output"
+vec_input_files <- list.files(path = s_data_input_dir, full.names = TRUE)
+#vec_input_files
+# read data from all inputfiles
+data_frame_list <- lapply(vec_input_files,
+                          function(i){
+                            readr::read_delim(i, 
+                                              delim = ";", 
+                                              escape_double = FALSE,
+                                              col_types = readr::cols(START_SENSOR_DATUM = readr::col_datetime(format = "%Y-%m-%d %H:%M:%S"),
+                                                                      END_SENSOR_DATUM = readr::col_datetime(format = "%Y-%m-%d %H:%M:%S")),
+                                              trim_ws = TRUE)})
+# Read all data frames
+SesamDatabase <- data.table::rbindlist(data_frame_list)
+n_nr_rec_se_db_org <- nrow(SesamDatabase)
+# rm original list of dataframes
+rm(data_frame_list)
+```
+
+Remove any duplicates in the dataset
+```{r}
+nrow(SesamDatabase)
+SesamDatabase <- unique(subset(SesamDatabase,select=c("START_SENSOR_DATUM",
+                                                      "END_SENSOR_DATUM",
+                                                      "SENSOR_MAC",
+                                                      "ACTIVITY")))
+nrow(SesamDatabase) 
+```
+
+Currently in the raw data we only have single columns for the start date/time and end date/time. Here we add 
+columns for date, hour and second of the recording
+```{r}
+SesamDatabase$PROBE_DATUM <- as.Date(format(SesamDatabase$START_SENSOR_DATUM, format='%Y-%m-%d')) #probe datum is the date 
+SesamDatabase$HOUR <- format(SesamDatabase$START_SENSOR_DATUM, format='%H') # hour shows the hour of the day the activity happened in 
+SesamDatabase$SEC <- SesamDatabase$END_SENSOR_DATUM - SesamDatabase$START_SENSOR_DATUM # sec shows the number of second that each activity occured for 
+table(SesamDatabase$ACTIVITY)
+
+SesamDatabase$SEC<-as.numeric(SesamDatabase$SEC) #make seconds numeric 
+table(SesamDatabase$SEC)
+```
+
+Sensor data is recorded at 12-13s intervals. We can see there are some strange outliers so we select only for data taken at intervals between 12-13s. 
+```{r}
+SesamDatabase <- subset(SesamDatabase,SEC>11)
+SesamDatabase <- subset(SesamDatabase,SEC<14)
+summary(SesamDatabase$SEC)
+#Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+#12.0    12.0    12.0    12.5    13.0    13.0 
+table(SesamDatabase$SEC)
+
+save(SesamDatabase,
+     file="~/sesam/MSc_project/GW50/thesis/data_org/SesamDatabase_GWXX_DATUMXXXX.RData",
+     vebose=T)
+```
+
+We group everything into the same sensor, activity, date and hour so that we can collect the total minutes of activity within the hour per cow and per day 
+```{r}
+library(plyr) #group all rows with the same sensor, activity, date and hour and then summarise the minutes of each of these groups 
+smry_SesamDatabase <- ddply(SesamDatabase, 
+                            .(SENSOR_MAC,ACTIVITY,PROBE_DATUM,HOUR), 
+                            summarise, 
+                            MINUTES=as.numeric(ceiling(sum(SEC)/60)))
+
+#now we have e.g for lying, the total number of minutes the cow was lying within each hour
+summary(smry_SesamDatabase$MINUTES)
+nrow(smry_SesamDatabase) 
+smry2_SesamDatabase<- subset(smry_SesamDatabase,
+                             MINUTES>0)
+nrow(smry2_SesamDatabase) 
+smry2_SesamDatabase<- subset(smry2_SesamDatabase,
+                             MINUTES<69)
+nrow(smry2_SesamDatabase) 
+
+```
+
+We create a dataset (SESAM_cow) where we have the total minutes per activity per hour 
+```{r}
+
+test1<- subset(smry_SesamDatabase, select = c(SENSOR_MAC,ACTIVITY,PROBE_DATUM,HOUR,MINUTES))
+
+colnames(test1)<-c("SENSOR_MAC","ANIMAL_ACTIVITY","DAY","HOUR","MINUTES")
+
+table(test1$ANIMAL_ACTIVITY)
+SESAM_cows_Eating <-subset(test1, 
+                           ANIMAL_ACTIVITY=="Eating")
+SESAM_cows_Eating <-subset(SESAM_cows_Eating, 
+                           select=c("SENSOR_MAC","DAY","HOUR","MINUTES"))
+colnames(SESAM_cows_Eating)<-c("SENSOR_MAC","DAY","HOUR","Eating")
+SESAM_cows_Walking <-subset(test1, 
+                            ANIMAL_ACTIVITY=="Walking")
+SESAM_cows_Walking <-subset(SESAM_cows_Walking, select=c("SENSOR_MAC","DAY","HOUR","MINUTES"))
+colnames(SESAM_cows_Walking)<-c("SENSOR_MAC","DAY","HOUR","Walking")
+SESAM_cows_Standing <-subset(test1, 
+                             ANIMAL_ACTIVITY=="Standing")
+SESAM_cows_Standing <-subset(SESAM_cows_Standing, select=c("SENSOR_MAC","DAY","HOUR","MINUTES"))
+colnames(SESAM_cows_Standing)<-c("SENSOR_MAC","DAY","HOUR","Standing")
+SESAM_cows_Ruminating <-subset(test1, 
+                               ANIMAL_ACTIVITY=="RuminatingTotal")
+SESAM_cows_Ruminating <-subset(SESAM_cows_Ruminating, select=c("SENSOR_MAC","DAY","HOUR","MINUTES"))
+colnames(SESAM_cows_Ruminating)<-c("SENSOR_MAC","DAY","HOUR","Ruminating")
+SESAM_cows_Laying <-subset(test1, 
+                           ANIMAL_ACTIVITY=="Lay")
+SESAM_cows_Laying <-subset(SESAM_cows_Laying, select=c("SENSOR_MAC","DAY","HOUR","MINUTES"))
+colnames(SESAM_cows_Laying)<-c("SENSOR_MAC","DAY","HOUR","Laying")
+
+SESAM_cow <- merge(SESAM_cows_Laying,
+                   SESAM_cows_Eating,
+                   by=c("SENSOR_MAC","DAY","HOUR"),
+                   all.x = TRUE)
+SESAM_cow <- merge(SESAM_cow,
+                   SESAM_cows_Standing,
+                   by=c("SENSOR_MAC","DAY","HOUR"),
+                   all.x = TRUE)
+SESAM_cow <- merge(SESAM_cow,
+                   SESAM_cows_Walking,
+                   by=c("SENSOR_MAC","DAY","HOUR"),
+                   all.x = TRUE)
+SESAM_cow <- merge(SESAM_cow,
+                   SESAM_cows_Ruminating,
+                   by=c("SENSOR_MAC","DAY","HOUR"),
+                   all.x = TRUE)
+
+SESAM_cow$Eating<-ifelse(is.na(SESAM_cow$Eating),0,SESAM_cow$Eating)
+SESAM_cow$Laying<-ifelse(is.na(SESAM_cow$Laying),0,SESAM_cow$Laying)
+SESAM_cow$Standing<-ifelse(is.na(SESAM_cow$Standing),0,SESAM_cow$Standing)
+SESAM_cow$Walking<-ifelse(is.na(SESAM_cow$Walking),0,SESAM_cow$Walking)
+SESAM_cow$Ruminating<-ifelse(is.na(SESAM_cow$Ruminating),0,SESAM_cow$Ruminating)
+
+SESAM_cow$activ <- SESAM_cow$Eating+SESAM_cow$Laying+SESAM_cow$Standing+SESAM_cow$Walking+SESAM_cow$Ruminating
+
+save(SESAM_cow,
+     file="~/sesam/MSc_project/Thesis_docs/SESAM_cow_new_hour_GWXX_DATUMXXXX.RData",
+     vebose=T)
+```
+
+Because we only have health and reproductive event data on a daily basis, rather than an exact time point or hour within that day, we merge the data of minutes spent on each activity per hour into minutes spent on each activity per day.
+```{r}
+load("~/sesam/MSc_project/Thesis_docs/SESAM_cow_new_hour_GWXX_DATUMXXXX.RData")
+SESAM_daily_min <- SESAM_cow %>%
+  group_by(SENSOR_MAC, DAY) %>%
+  summarise(Lying = sum(Laying),
+            Eating = sum(Eating),
+            Standing = sum(Standing),
+            Walking = sum(Walking),
+            Ruminating = sum(Ruminating),
+            Daily_Activ = sum(activ))
+nrow(SESAM_daily_min) 
+```
+
+A boxplot of data distribution
+```{r}
+library(ggplot2)
+p <- ggplot(SESAM_daily_min, aes(Daily_Activ)) + geom_boxplot()
+p
+```
+
+Removal of outliers based on 3x the interquartile range 
+```{r}
+#find Q1, Q3, and interquartile range for values in column A
+Q1 <- quantile(SESAM_daily_min$Daily_Activ, .25)
+Q3 <- quantile(SESAM_daily_min$Daily_Activ, .75)
+IQR <- IQR(SESAM_daily_min$Daily_Activ)
+
+#only keep rows in dataframe that have values within 1.5*IQR of Q1 and Q3
+no_outliers <- subset(SESAM_daily_min, SESAM_daily_min$Daily_Activ > (Q1 - 1.5*IQR) & SESAM_daily_min$Daily_Activ < (Q3 + 1.5*IQR))
+
+#view row and column count of new data frame
+dim(no_outliers) 
+
+p <- ggplot(no_outliers, aes(Daily_Activ)) + geom_boxplot()
+p
+```
+
+We still have too many outliers: with 1440 minutes in a day, we remove all data with less than 1100 min and more than 1440 mins per day
+```{r}
+full_data_SESAM2 <- SESAM_daily_min %>%
+  filter(Daily_Activ > 1100 & Daily_Activ < 1400)
+
+plot_mean_mins <- ggplot(full_data_SESAM2, aes(Daily_Activ)) + geom_boxplot()
+ggsave(plot_mean_mins, file = "daily_activ_boxplot_filtered2.pdf")
+plot_mean_mins
+```
+
+Then we want to only include data that has a recording for every activity at least once per day (eliminate any data that says one of the activities did not occur in one day)
+```{r}
+all_activity <- full_data_SESAM2 %>%
+  filter(Lying > 0 & Eating >0 & Standing > 0 & Walking > 0 & Ruminating > 0)
+save(all_activity,
+     file="~/sesam/MSc_project/GW50/thesis/data_org/all_activity_SESAM_COW.RData",
+     vebose=T)
+```
+
+create a violin plot of each activity over the whole period of time recorded: we first need to merge the columns of each different activity into one column called "series"
+```{r}
+library(reshape2)
+df <- melt(subset(all_activity,
+                  select=c("SENSOR_MAC","DAY",
+                           "Lying",
+                           "Eating",
+                           "Standing",
+                           "Walking",
+                           "Ruminating")),
+           id.vars = c("SENSOR_MAC","DAY"),
+           variable.name = 'series')
+
+#now we can plot
+plot_mean <- ggplot(df, aes(series, value, fill = series)) + geom_violin()
+ggsave(plot_mean, file = "series_violin.pdf")
+plot_mean
+```
+
+Lying time is far too long. We can remove all data where lying is over ~700 minutes per day. This is the lying time where the cow is not ruminating. As a reust, any time over 700 minutes is not included.
+```{r}
+all_activity2 <- all_activity %>%
+  filter(Lying > 0 & Lying <700 & Eating >0 & Standing > 0 & Walking > 0 & Ruminating > 0)
+
+group_sesam2 <- all_activity2 %>%
+  group_by(SENSOR_MAC) %>%
+  summarise(n = n())
+nrow(group_sesam2)
+
+library(reshape2)
+df2 <- melt(subset(all_activity2,
+                  select=c("SENSOR_MAC","DAY",
+                           "Lying",
+                           "Eating",
+                           "Standing",
+                           "Walking",
+                           "Ruminating")),
+           id.vars = c("SENSOR_MAC","DAY"),
+           variable.name = 'series')
+
+save(df2,
+     file="~/sesam/MSc_project/GW50/thesis/data_org/melted_SESAM_COW.RData",
+     vebose=T)
+
+plot_mean2 <- ggplot(df2, aes(series, value, fill = series)) + geom_violin()
+ggsave(plot_mean2, file = "series_violin2.pdf")
+plot_mean2
+```
